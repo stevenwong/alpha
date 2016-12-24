@@ -1,0 +1,16 @@
+{
+	"app" : "Quant",
+	"logging" : {
+		"level" : "debug",
+		"log_file" : "app.log"
+	},
+	"database" : [{
+		"name" : "local",
+		"driver" : "PostgreSQL Unicode(x64)",
+		"server" : "localhost",
+		"port" : 5432,
+		"database" : "equities",
+		"uid" : "app",
+		"pwd" : "cobalt@4"
+	}]
+}
