@@ -1,10 +1,9 @@
-"""
-	Application
+""" Application
 
-	Copyright (C) 2016 Steven Wong <steven.ykwong87@gmail.com>
+Copyright (C) 2016 Steven Wong <steven.ykwong87@gmail.com>
 
-	This file can not be copied and/or distributed without the express
-	permission of the owner.
+This file can not be copied and/or distributed without the express
+permission of the owner.
 
 """
 
@@ -13,7 +12,10 @@ import core.config as config
 import core.database as database
 
 class App(object):
-	""" All the application wide settings etc.
+	""" Singleton class that initialises all the settings.
+
+	Attributes:
+		config (core.Config): System config dict.
 
 	"""
 
@@ -54,22 +56,14 @@ class App(object):
 		return cls.__instance
 
 	def connect(self, db):
-		""" Connect to database based on config
+		""" Connect to database based on config.
 
 		"""
 
 		name = db['name']
-		driver = db['driver']
-		dbn = db['database']
-		uid = db['uid']
-		pwd = db['pwd']
-		server = db['server']
-		port = db['port']
+		db_str = db['connection_str']
 
-		db_str = 'DRIVER={%s};SERVER=%s;PORT=%d;DATABASE=%s;UID=%s;PWD=%s' % (driver,
-			server, port, dbn, uid, pwd)
-
-		self.cxns[name] = database.Database(db_str)
+		self.cxns[name] = database.CoreDatabase(db_str)
 
 	def cxn(self, datasource=None):
 		""" Get default database connection"

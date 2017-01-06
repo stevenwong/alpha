@@ -6,11 +6,6 @@
 	},
 	"database" : [{
 		"name" : "local",
-		"driver" : "PostgreSQL Unicode(x64)",
-		"server" : "localhost",
-		"port" : 5432,
-		"database" : "equities",
-		"uid" : "app",
-		"pwd" : "cobalt@4"
+		"connection_str" : "DRIVER={PostgreSQL Unicode(x64)};SERVER=localhost;PORT=5432;DATABASE=equities;UID=app;PWD=cobalt@4;BoolsAsChar=0"
 	}]
 }

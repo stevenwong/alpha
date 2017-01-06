@@ -12,9 +12,30 @@ import collections
 import pandas as pd
 from pandas.tseries.offsets import BMonthEnd, DateOffset
 
+def drop_columns(df, to_drop):
+	""" Drop specified columns
+
+	:param df: DataFrame
+	:param to_drop: Columns to drop
+
+	"""
+
+	if not isinstance(to_drop, collections.Iterable) or isinstance(to_drop, str):
+		to_drop = [to_drop]
+
+	xs = []
+	for col in df.columns:
+		if not col in to_drop:
+			xs.append(col)
+
+	return df[xs]
+
 def generate_trade_dates(start_date='1900-01-01', end_date='2199-12-31'):
 	""" Generate business dates. trade_dates table has columns:
-	[quote_date, next_trade_date, next_eom_date, weekday, eom_yn, mom_yn, counter]
+	[quote_date, next_trade_date, next_eom_date, weekday, is_eom, is_mom, counter]
+	Use this to insert into database
+
+	cxn.executemany('insert into trade_dates values (?, ?, ?, ?, ?, ?, ?)', ts)
 
 	:param start_date: Start date
 	:param end_date: End date
@@ -33,6 +54,7 @@ def generate_trade_dates(start_date='1900-01-01', end_date='2199-12-31'):
 	ts['weekday'] = weekdays
 
 	eom = pd.bdate_range(start_date, end_date, freq='BM')
+	# unfortunately postgre ODBC driver doesn't seem to handle Python's boolean properly
 	ts['eom_yn'] = False
 	ts.loc[ts.quote_date.isin(eom), 'eom_yn'] = True
 
@@ -43,24 +65,14 @@ def generate_trade_dates(start_date='1900-01-01', end_date='2199-12-31'):
 	mom = ts.groupby('yymm').apply(lambda x: x.loc[x.dd <= 15]).groupby(level='yymm').max()
 	ts.loc[ts.quote_date.isin(mom.quote_date), 'mom_yn'] = True
 
+	ts = drop_columns(ts, ['yymm', 'dd'])
+
 	ts['counter'] = ts.index
 
 	return ts
 
-def drop_column(df, to_drop):
-	""" Drop specified columns
-
-	:param df: DataFrame
-	:param to_drop: Columns to drop
-
-	"""
-
-	if not isinstance(to_drop, collections.Iterable) or isinstance(to_drop, str):
-		to_drop = [to_drop]
-
-	xs = []
-	for col in df.columns:
-		if not col in to_drop:
-			xs.append(col)
-
-	return df[xs]
+def ifempty(value, reset=None):
+	if not value:
+		return reset
+	else:
+		return value

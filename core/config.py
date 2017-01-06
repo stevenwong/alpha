@@ -1,10 +1,9 @@
-"""
-	Config
+""" Config
 
-	Copyright (C) 2016 Steven Wong <steven.ykwong87@gmail.com>
+Copyright (C) 2016 Steven Wong <steven.ykwong87@gmail.com>
 
-	This file can not be copied and/or distributed without the express
-	permission of the owner.
+This file can not be copied and/or distributed without the express
+permission of the owner.
 
 """
 
@@ -13,7 +12,7 @@ import json
 from collections import UserDict
 
 class Config(UserDict):
-	""" Config class extending dictionary to support x.y.z addressing
+	""" Config class extending dictionary to support x.y.z addressing.
 
 	"""
 
@@ -27,8 +26,9 @@ class Config(UserDict):
 	def get_value(self, key, default=None):
 		""" Supports addressing nested structures via x.y.z nomenclature
 
-			:param key: Dictionary key
-			:param default: default value to use
+		Args:
+			key (str): Dictionary key
+			default (optional) default value to use
 
 		"""
 

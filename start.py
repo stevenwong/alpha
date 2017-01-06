@@ -14,9 +14,9 @@ pyximport.install(pyimport=True)
 
 import logging
 
-import core.app as app
-app.App()
-logging.info('imported core.app')
+from core.app import *
+App()
+logging.info('from core.app import *')
 
 import pandas as pd
 logging.info('imported pandas as pd')
@@ -25,4 +25,4 @@ import numpy as np
 logging.info('imported numpy as np')
 
 import core.utils as utils
-logging.info('imported core.utils as utils')
+logging.info('from core.utils import *')
