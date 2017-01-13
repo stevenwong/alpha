@@ -8,6 +8,7 @@ permission of the owner.
 """
 
 import pyodbc
+import logging
 import pandas as pd
 
 class Database(object):
@@ -51,6 +52,14 @@ class Database(object):
 		return self.cxn.cursor()
 
 	def execute(self, sql, *args, **kwargs):
+		# test the connection first
+		try:
+			with self.cursor() as cur:
+				cur.execute('select 1')
+
+		except:
+			self.connect()
+			
 		try:
 			cur = self.cursor()
 			status = cur.execute(sql, *args, **kwargs)
@@ -72,6 +81,20 @@ class Database(object):
 			status: Return value from pyodbc.
 
 		"""
+
+		# test the connection first
+		try:
+			with self.cursor() as cur:
+				cur.execute('select 1')
+
+		except:
+			self.connect()
+
+		if len(params) <= 0:
+			return
+
+		if isinstance(params, pd.Series):
+			params = params.to_frame()
 		
 		if isinstance(params, pd.DataFrame):
 			params = params.copy()
@@ -87,6 +110,8 @@ class Database(object):
 			cur.commit()
 			return status
 		except:
+			logging.error("Params were")
+			logging.error(params)
 			self._connected = False
 			self.connect()
 			raise
@@ -98,6 +123,19 @@ class CoreDatabase(Database):
 
 	def __init__(self, *args, **kwargs):
 		super(CoreDatabase, self).__init__(*args, **kwargs)
+
+	def get_prev_trade_date(self, quote_date):
+		""" Get previous trade date.
+
+		Args:
+			quote_date (datetime): Quote date.
+
+		Returns:
+			datetime preceding quote date.
+
+		"""
+
+		return self.execute('select max(quote_date) from trade_dates where quote_date < ?', (quote_date, )).fetchone()
 
 	def get_trade_dates(self, start_date, end_date, freq='M'):
 		pass
@@ -116,8 +154,35 @@ class CoreDatabase(Database):
 
 		"""
 
+		quote_date = pd.to_datetime(quote_date)
+
 		sql = """
-			select 
-			from 
+			select *
+			from stock_info
+			where ? between start_date and end_date
 		"""
+
+		stocks = pd.read_sql(sql, con=self, params=(quote_date, ))
+
+		return stocks.set_index('uid')
+
+	def get_icb_sectors(self, unique_name=False):
+		""" Get ICB code and names.
+
+		Args:
+			unique_name (boolean): Only returns lowest level for every name if True. Else return all
+			levels.
+
+		Returns:
+			DataFrame with code, name and level.
+
+		"""
+
+		icb = pd.read_sql('select * from icb_sectors', self)
+
+		if not unique_name:
+			return icb
+		else:
+			icb = icb.loc[icb.level == icb.groupby('name')['level'].transform(max)]
+			return icb
 	

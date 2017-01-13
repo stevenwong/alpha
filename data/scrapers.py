@@ -9,6 +9,7 @@ permission of the owner.
 
 import requests
 
+from requests.exceptions import *
 from core.utils import *
 from lxml import html
 
@@ -74,27 +75,50 @@ class ADVFNStockInfoScraper(ScraperMixin):
 		url = ADVFNStockInfoScraper.INFO_URL % {'exchange' : exchange, 'ticker' : ticker}
 		fields = dict()
 
-		tree = super(ADVFNStockInfoScraper, self).fetch(url)
+		try:
+			tree = super(ADVFNStockInfoScraper, self).fetch(url)
+		except TooManyRedirects:
+			return None
 
-		table = tree.xpath('//tr[th="Stock Name"]/..')[0]
+		table = tree.xpath('//tr[th="Stock Name"]/..')
+		if not table:
+			return None
+		else:
+			table = table[0]
 
 		text = table.xpath('./tr/td[1]//text()')
-		fields['security_name'] = None if not text else text[0]
+		fields['security_name'] = None if not text else text[0].strip()
 
 		text = table.xpath('./tr/td[2]//text()')
-		fields['ticker'] = None if not text else text[0]
+		fields['ticker'] = None if not text else text[0].strip()
 
 		text = table.xpath('./tr/td[3]//text()')
-		fields['exchange'] = None if not text else text[0]
+		fields['exchange'] = None if not text else text[0].strip()
 
 		text = table.xpath('./tr/td[4]//text()')
-		fields['security_type'] = None if not text else text[0]
+		fields['security_type'] = None if not text else text[0].strip()
 
 		text = table.xpath('./tr/td[5]//text()')
-		fields['isin'] = None if not text else text[0]
+		fields['isin'] = None if not text else text[0].strip()
 
 		table = tree.xpath('//tr[th="Currency"]/..')[0]
 		text = table.xpath('./tr/td[5]//text()')
-		fields['currency_code'] = text[0]
+		fields['currency_code'] = text[0].strip()
 
 		return fields
+
+class GoogleFinanceScraper(ScraperMixin):
+	""" Get stock info from Google Finance.
+
+	.. _Google Finance:
+		https://www.google.com/finance?q={TICKER}
+
+	"""
+
+	QUOTE_URL = 'https://www.google.com/finance?q=%(ticker)s'
+
+	def __init__(self):
+		super(GoogleFinanceScraper, self).__init__()
+
+	def parse(self, ticker, exchange=None):
+		pass

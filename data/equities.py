@@ -13,6 +13,7 @@ import requests
 import json
 import csv
 import io
+import numpy as np
 import pandas as pd
 import datetime as dt
 
@@ -24,8 +25,8 @@ from .scrapers import ADVFNStockInfoScraper
 class EquitySecurity(object):
 	""" Representing security information. Ticker is local ticker, without "US Equity". Format::
 
-		['uid', 'ticker', 'security_name', 'exchange', 'bb_cmd', 'sedol', 'isin', 'cusip', 'ric',
-		'ibes_ticker', 'currency_code', 'gics', 'country', 'security_type', 'start_date', 'end_date',
+		['uid', 'ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip', 'ric',
+		'ibes_ticker', 'currency_code', 'gics', 'icb', 'country', 'security_type', 'start_date', 'end_date',
 		'source', 'last_updated_date']
 
 	"""
@@ -33,23 +34,114 @@ class EquitySecurity(object):
 	def __init__(self):
 		super(EquitySecurity, self).__init__()
 
-	def get(self, quote_date):
+	def get(self, cxn, quote_date):
+		# Implemented by subclass
 		pass
 
-	def update(self, quote_date):
-		""" Update process for all stocks in consideration.
+	def insert_new_stocks(self, cxn, stocks):
+		""" Given list of ready-to-insert stocks, insert them.
 
 		Args:
-			quote_date (datetime): Quote date to update.
-			uids (list of integers)
+			cxn (database): Database connection.
+			stocks (list): List of stocks to be inserted.
+
+		Returns:
+			Status of insert.
 
 		"""
 
-		pass
+		# insert new stocks
+		sql = """
+			insert into stock_info (uid, ticker, security_name, exchange, bb_ticker, sedol, isin, cusip, ric,
+			ibes_ticker, currency_code, gics, icb, country, security_type, start_date, end_date,
+			source) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		"""
+		return cxn.executemany(sql, stocks)
+
+	def set_new_uid(self, stocks, existing):
+		""" Set new uids for stocks in stocks where uid is null.
+
+		Args:
+			stocks (list): List of stocks to set.
+			existing (list): List of existing stocks.
+
+		Args:
+			stocks
+
+		"""
+
+		max_uid = existing.uid.max()
+		if max_uid is None or max_uid is np.nan:
+			max_uid = 0
+
+		for i in range(len(stocks)):
+			# loop through each stock and set its uid individually if they are None.
+			if stocks.iloc[i, 0] is None or stocks.iloc[i, 0] is np.nan:
+				max_uid += 1
+				stocks.iloc[i, 0] = max_uid
+
+		return stocks
+
+	def update(self, cxn, quote_date, debug=False):
+		""" Update process for all stocks in consideration.
+
+		Args:
+			cxn (Database): Database connection
+			quote_date (datetime): Quote date to update.
+
+		"""
+
+		prev_date = cxn.get_prev_trade_date(quote_date)
+
+		existing = cxn.get_stock_list(quote_date).reset_index()
+		stocks = self.get(cxn, quote_date)
+
+		# match existing and new stocks to see what's changed
+		# order is [ticker, sedol, isin]
+		stocks['uid'] = pd.merge(stocks[['ticker', 'exchange']], existing[['ticker', 'exchange', 'uid']], how='left', on=['ticker', 'exchange'])['uid']
+		stocks['uid'].fillna(pd.merge(stocks.sedol.to_frame('sedol'), existing[['sedol', 'uid']], how='left', on='sedol')['uid'], inplace=True)
+		stocks['uid'].fillna(pd.merge(stocks['isin'].to_frame('isin'), existing[['isin', 'uid']], how='left', on='isin')['uid'], inplace=True)
+
+		stocks['status'] = 'new'
+		stocks.loc[pd.notnull(stocks.uid), 'status'] = 'exist'
+		stocks = stocks.where(pd.notnull(stocks), None)
+
+		stocks = self.set_new_uid(stocks, existing)
+
+		to_insert = stocks.loc[stocks.status == 'new']
+		matched = stocks.loc[stocks.status == 'exist']
+		matched.sort_values('uid', inplace=True)
+		existing = existing.loc[existing.uid.isin(matched.uid)]
+		existing.sort_values('uid', inplace=True)
+
+		ne = (drop_columns(existing, ['source', 'last_updated_date', 'start_date', 'end_date']) !=
+			drop_columns(matched, ['source', 'last_updated_date', 'start_date', 'end_date', 'status'])).any(1)
+
+		print(ne)
+		to_update = existing.loc[ne]
+		to_insert2 = matched.loc[ne]
+
+		# two steps, end date the previous entry then insert the new updates.
+		sql2 = """
+			update stock_info set end_date = ?
+			where uid = ?
+		"""
+		cxn.executemany(sql2, to_update.uid)
+
+		to_insert = pd.concat([to_insert, to_insert2])
+		to_insert = drop_columns(to_insert, 'status')
+
+		# insert new stocks
+		self.insert_new_stocks(cxn, to_insert)
+
+		return stocks
 
 class ADVFNEquitySecurity(EquitySecurity, ADVFNStockInfoScraper):
 	""" Scrape ADVFN for stock information. We first go to NASDAQ to get all available stocks in the
 	US.
+
+	.. US stock list:
+		http://www.nasdaq.com/screening/company-list.aspx
 
 	.. _NASDAQ:
 		http://www.nasdaq.com/screening/companies-by-name.aspx?letter=0&exchange=nasdaq&render=download
@@ -92,11 +184,13 @@ class ADVFNEquitySecurity(EquitySecurity, ADVFNStockInfoScraper):
 		data = data.loc[data.mkt_cap != 'n/a']
 		data['exchange'] = exchange
 		data['ipo_year'].replace(to_replace='n/a', value='1950', inplace=True)
-		data['start_date'] = [dt.datetime(int(y), 1, 1) for y in data.ipo_year]
 
 		return data
 
-	def get(self, quote_date):
+	def _parse_ticker(self, x):
+		return pd.Series(self.parse(x['ticker'], x['exchange']))
+
+	def get(self, cxn, quote_date):
 		""" Get all stocks available in the US from NASDAQ, then go to ADVFN to get all stock info.
 
 		Args:
@@ -110,8 +204,36 @@ class ADVFNEquitySecurity(EquitySecurity, ADVFNStockInfoScraper):
 		data3 = self._get_available_stocks(ADVFNEquitySecurity.AMEX, 'AMEX')
 
 		stocks = pd.concat([data1, data2, data3])
-		details = stocks.head(100).apply(lambda x: pd.Series(self.parse(x.ticker, x.exchange)), axis=1)
-		stocks = stocks.join(drop_column(details, 'security_name'), on=['ticker', 'exchange'])
+
+		details = stocks.apply(lambda x: pd.Series(self.parse(x.ticker, x.exchange)), axis=1)
+		
+		stocks = pd.merge(stocks, drop_columns(details, 'security_name'), on=['ticker', 'exchange'], how='left')
+		stocks = drop_columns(stocks, ['last', 'mkt_cap', 'url', 'spare', 'ipo_year'])
+
+		icb = cxn.get_icb_sectors(unique_name=True)
+
+		stocks.loc[stocks.security_name == 'n/a', 'security_name'] = None
+		stocks.loc[stocks.sector == 'n/a', 'sector'] = None
+		stocks.loc[stocks.subsector == 'n/a', 'subsector'] = None
+		translated = pd.merge(stocks[['ticker', 'subsector']], icb[['code', 'name']], how='left', left_on='subsector',
+			right_on='name')
+		translated = translated.rename(columns={'code' : 'icb'})
+		stocks['icb'] = translated.icb
+		stocks['uid'] = None
+		stocks['country'] = 'US'
+		stocks['bb_ticker'] = stocks.ticker + ' ' + stocks.country + ' Equity'
+		stocks['sedol'] = None
+		stocks['cusip'] = None
+		stocks['ric'] = None
+		stocks['ibes_ticker'] = None
+		stocks['gics'] = None
+		stocks['source'] = 'WIKI'
+		stocks['start_date'] = quote_date
+		stocks['end_date'] = '9999-12-31'
+
+		stocks = stocks[['uid', 'ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip', 'ric',
+			'ibes_ticker', 'currency_code', 'gics', 'icb', 'country', 'security_type', 'start_date', 'end_date',
+			'source']]
 
 		return stocks
 
@@ -207,14 +329,15 @@ class QuandlWIKIEquityPricing(QuandlEquityPricing):
 
 		self.url = 'https://www.quandl.com/api/v3/datatables/WIKI/PRICES.json'
 
-	def get(self, quote_date):
+	def get(self, cxn, quote_date):
 		""" Get all prices for one date.
 
 		Args:
+			cxn (Database): Database connection
 			quote_date (timestamp): Quote date to get.
 
 		Returns:
-			DataFrame
+			DataFrame with all the columns in stock_prices
 
 		"""
 
@@ -239,6 +362,20 @@ class QuandlWIKIEquityPricing(QuandlEquityPricing):
 		dataset['accum_adj_factor'] = 1
 		dataset['bid_ask_spread'] = None
 		dataset['source'] = 'WIKI'
-		dataset['last_updated_date'] = dt.now()
+		dataset['accum_index'] = None
+
+		# figure out the uids
+		stocks = cxn.get_stock_list(quote_date).reset_index()
+		dataset['uid'] = pd.merge(dataset[['ticker']], stocks[['ticker', 'uid']],
+			how='left', on=['ticker'])['uid']
+
+		e = EquitySecurity()
+
+		missing = dataset.loc[pd.isnull(dataset.uid)]
+		e.set_new_uid(missing, stocks)
+
+		dataset = dataset[['quote_date', 'uid', 'currency_code', 'open', 'high', 'low', 'close',
+			'shares_os', 'volume', 'adj_factor', 'accum_adj_factor', 'accum_index', 'bid_ask_spread',
+			'source']]
 
 		return dataset

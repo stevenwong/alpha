@@ -10,7 +10,9 @@
 
 import collections
 import pandas as pd
+
 from pandas.tseries.offsets import BMonthEnd, DateOffset
+from multiprocessing import Pool, cpu_count
 
 def drop_columns(df, to_drop):
 	""" Drop specified columns
@@ -76,3 +78,15 @@ def ifempty(value, reset=None):
 		return reset
 	else:
 		return value
+
+def apply_parallel(grouped, func, spare=True):
+	jobs = cpu_count() - 1 if spare  else cpu_count()
+	with Pool(jobs) as p:
+		result = p.map(func, [group for name, group in grouped])
+	return pd.concat(result)
+
+def apply_row(df, func, spare=True):
+	jobs = cpu_count() - 1 if spare  else cpu_count()
+	with Pool(jobs) as p:
+		result = p.map(func, [row for index, row in df.iterrows()])
+	return pd.concat(result)

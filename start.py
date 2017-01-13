@@ -26,3 +26,6 @@ logging.info('imported numpy as np')
 
 import core.utils as utils
 logging.info('from core.utils import *')
+
+cxn = App().cxn()
+logging.info('cxn = App().cxn()')

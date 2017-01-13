@@ -6,6 +6,9 @@
 	},
 	"database" : [{
 		"name" : "local",
+		"connection_str" : "DRIVER={MariaDB ODBC 2.0 Driver};SERVER=localhost;PORT=3306;DATABASE=equities;UID=app;PWD=cobalt@4"
+	}, {
+		"name" : "postgre",
 		"connection_str" : "DRIVER={PostgreSQL Unicode(x64)};SERVER=localhost;PORT=5432;DATABASE=equities;UID=app;PWD=cobalt@4;BoolsAsChar=0"
 	}]
 }
