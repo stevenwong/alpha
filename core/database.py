@@ -9,6 +9,7 @@ permission of the owner.
 
 import pyodbc
 import logging
+import re
 import pandas as pd
 
 class Database(object):
@@ -51,6 +52,9 @@ class Database(object):
 		"""
 		return self.cxn.cursor()
 
+	def rollback(self):
+		return self.cxn.rollback()
+
 	def execute(self, sql, *args, **kwargs):
 		# test the connection first
 		try:
@@ -59,7 +63,7 @@ class Database(object):
 
 		except:
 			self.connect()
-			
+
 		try:
 			cur = self.cursor()
 			status = cur.execute(sql, *args, **kwargs)
@@ -166,6 +170,13 @@ class CoreDatabase(Database):
 
 		return stocks.set_index('uid')
 
+	def get_max_uid(self):
+		""" Get maximum UID in stock_info
+
+		"""
+
+		return self.execute("select max(uid) from stock_info").fetchone()[0]
+
 	def get_icb_sectors(self, unique_name=False):
 		""" Get ICB code and names.
 
@@ -185,4 +196,35 @@ class CoreDatabase(Database):
 		else:
 			icb = icb.loc[icb.level == icb.groupby('name')['level'].transform(max)]
 			return icb
+
+	def get_stock_prices(cxn, quote_date, uids=None):
+		""" Get all prices for a date and optionally for a list of uids.
+
+		Args:
+			cxn (database): Database.
+			quote_date (datetime): Quote date.
+			uids (list[int], optional): List of uid.
+
+		Returns:
+			Dataframe of prices.
+
+		"""
+
+		sql = """
+			select p.*
+			from stock_prices p
+			where p.quote_date = ?
+			[and p.uid in (%s)]
+		"""
+
+		if uids:
+			sql = re.sub(r"[\[\]]", '', sql, 2)
+			sql = sql % (','.join([str(int(uid)) for uid in uids]))
+		else:
+			sql = re.sub(r"\[.+\]", '', sql, 1)
+
+		prices = pd.read_sql(sql, con=cxn, params=(quote_date, ))
+		prices.set_index(['quote_date', 'uid'], inplace=True)
+
+		return prices
 	

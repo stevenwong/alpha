@@ -11,7 +11,8 @@ import requests
 
 from requests.exceptions import *
 from core.utils import *
-from lxml import html
+
+from bs4 import BeautifulSoup
 
 class ScraperMixin(object):
 	""" Scraper for ADVFN using the tutorial.
@@ -43,9 +44,9 @@ class ScraperMixin(object):
 		"""
 
 		page = requests.get(url, params=params)
-		tree = html.fromstring(page.content)
+		soup = BeautifulSoup(page.content, 'html.parser')
 
-		return tree
+		return soup
 
 class ADVFNStockInfoScraper(ScraperMixin):
 	""" Scrapes the page:
@@ -76,49 +77,66 @@ class ADVFNStockInfoScraper(ScraperMixin):
 		fields = dict()
 
 		try:
-			tree = super(ADVFNStockInfoScraper, self).fetch(url)
+			soup = super(ADVFNStockInfoScraper, self).fetch(url)
 		except TooManyRedirects:
 			return None
 
-		table = tree.xpath('//tr[th="Stock Name"]/..')
+		table = soup.find('th', string='Stock Name').parent.parent
+
 		if not table:
 			return None
-		else:
-			table = table[0]
 
-		text = table.xpath('./tr/td[1]//text()')
-		fields['security_name'] = None if not text else text[0].strip()
+		rows = table.find_all('tr')
 
-		text = table.xpath('./tr/td[2]//text()')
-		fields['ticker'] = None if not text else text[0].strip()
+		if len(rows) < 2:
+			return None
 
-		text = table.xpath('./tr/td[3]//text()')
-		fields['exchange'] = None if not text else text[0].strip()
+		row = rows[1]
 
-		text = table.xpath('./tr/td[4]//text()')
-		fields['security_type'] = None if not text else text[0].strip()
+		cells = row.find_all('td')
+		fields['security_name'] = None if not len(cells) > 0 else cells[0].string.strip()
 
-		text = table.xpath('./tr/td[5]//text()')
-		fields['isin'] = None if not text else text[0].strip()
+		fields['ticker'] = None if not len(cells) > 1 else cells[1].string.strip()
 
-		table = tree.xpath('//tr[th="Currency"]/..')[0]
-		text = table.xpath('./tr/td[5]//text()')
-		fields['currency_code'] = text[0].strip()
+		fields['exchange'] = None if not len(cells) > 2 else cells[2].string.strip()
+
+		fields['security_type'] = None if not len(cells) > 3 else cells[3].string.strip()
+
+		fields['isin'] = None if not len(cells) > 4 else cells[4].string.strip()
+
+		text = soup.find('span', id='quoteElementPiece24').string
+		fields['currency_code'] = None if not text else text.strip()
 
 		return fields
 
-class GoogleFinanceScraper(ScraperMixin):
-	""" Get stock info from Google Finance.
+class ADVFNFinancials(ScraperMixin):
+	""" Get stock financials from ADVFN.
 
-	.. _Google Finance:
-		https://www.google.com/finance?q={TICKER}
+	.. _ADVFN:
+		http://au.advfn.com/stock-market/{exchange}/{ticker}/financials?btn=istart_date&istart_date={i}&mode=quarterly_reports
 
 	"""
 
-	QUOTE_URL = 'https://www.google.com/finance?q=%(ticker)s'
+	QTR_URL = 'http://au.advfn.com/stock-market/%(exchange)s/%(ticker)s/financials?istart_date=%(i)s&mode=quarterly_reports'
 
 	def __init__(self):
-		super(GoogleFinanceScraper, self).__init__()
+		super(ADVFNFinancials, self).__init__()
+
+	def _parse(self, ticker, exchange, i):
+		""" Parse the quarterly financials page and return a dict with key on years.
+
+		"""
+
+		url = ADVFNFinancials.QTR_URL % {'exchange' : exchange, 'ticker' : ticker, 'i' : i}
+
+		try:
+			tree = super(ADVFNFinancials, self).fetch(url)
+		except TooManyRedirects:
+			return None
+
+		select = tree.xpath('/select[id="istart_dateid"]')
+
+		return select
 
 	def parse(self, ticker, exchange=None):
 		pass

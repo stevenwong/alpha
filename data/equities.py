@@ -13,6 +13,7 @@ import requests
 import json
 import csv
 import io
+import html
 import numpy as np
 import pandas as pd
 import datetime as dt
@@ -26,8 +27,8 @@ class EquitySecurity(object):
 	""" Representing security information. Ticker is local ticker, without "US Equity". Format::
 
 		['uid', 'ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip', 'ric',
-		'ibes_ticker', 'currency_code', 'gics', 'icb', 'country', 'security_type', 'start_date', 'end_date',
-		'source', 'last_updated_date']
+		'ibes_ticker', 'currency_code', 'gics', 'icb', 'country', 'security_type', 'security_code',
+		'start_date', 'end_date', 'source', 'last_updated_date']
 
 	"""
 
@@ -58,10 +59,11 @@ class EquitySecurity(object):
 		"""
 		return cxn.executemany(sql, stocks)
 
-	def set_new_uid(self, stocks, existing):
+	def set_new_uid(self, cxn, stocks, existing):
 		""" Set new uids for stocks in stocks where uid is null.
 
 		Args:
+			cxn (database): Database connection.
 			stocks (list): List of stocks to set.
 			existing (list): List of existing stocks.
 
@@ -70,15 +72,17 @@ class EquitySecurity(object):
 
 		"""
 
-		max_uid = existing.uid.max()
+		max_uid = cxn.get_max_uid()
 		if max_uid is None or max_uid is np.nan:
 			max_uid = 0
 
+		idx = stocks.columns.get_loc('uid')
+
 		for i in range(len(stocks)):
 			# loop through each stock and set its uid individually if they are None.
-			if stocks.iloc[i, 0] is None or stocks.iloc[i, 0] is np.nan:
+			if pd.isnull(stocks.iloc[i, idx]):
 				max_uid += 1
-				stocks.iloc[i, 0] = max_uid
+				stocks.iloc[i, idx] = max_uid
 
 		return stocks
 
@@ -106,7 +110,7 @@ class EquitySecurity(object):
 		stocks.loc[pd.notnull(stocks.uid), 'status'] = 'exist'
 		stocks = stocks.where(pd.notnull(stocks), None)
 
-		stocks = self.set_new_uid(stocks, existing)
+		stocks = self.set_new_uid(cxn, stocks, existing)
 
 		to_insert = stocks.loc[stocks.status == 'new']
 		matched = stocks.loc[stocks.status == 'exist']
@@ -114,10 +118,11 @@ class EquitySecurity(object):
 		existing = existing.loc[existing.uid.isin(matched.uid)]
 		existing.sort_values('uid', inplace=True)
 
-		ne = (drop_columns(existing, ['source', 'last_updated_date', 'start_date', 'end_date']) !=
-			drop_columns(matched, ['source', 'last_updated_date', 'start_date', 'end_date', 'status'])).any(1)
+		ne = (existing.set_index('uid')[['ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip',
+			'ric', 'ibes_ticker', 'currency_code', 'gics', 'icb', 'country']].sort(axis=0) !=
+			matched.set_index('uid')[['ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip',
+			'ric', 'ibes_ticker', 'currency_code', 'gics', 'icb', 'country']].sort(axis=0)).any(1)
 
-		print(ne)
 		to_update = existing.loc[ne]
 		to_insert2 = matched.loc[ne]
 
@@ -184,6 +189,8 @@ class ADVFNEquitySecurity(EquitySecurity, ADVFNStockInfoScraper):
 		data = data.loc[data.mkt_cap != 'n/a']
 		data['exchange'] = exchange
 		data['ipo_year'].replace(to_replace='n/a', value='1950', inplace=True)
+		data['ticker'] = data.ticker.str.strip()
+		data['security_name'] = data.security_name.str.strip()
 
 		return data
 
@@ -212,6 +219,8 @@ class ADVFNEquitySecurity(EquitySecurity, ADVFNStockInfoScraper):
 
 		icb = cxn.get_icb_sectors(unique_name=True)
 
+		stocks['security_name'] = stocks.security_name.apply(lambda x: html.unescape(x), axis=1)
+
 		stocks.loc[stocks.security_name == 'n/a', 'security_name'] = None
 		stocks.loc[stocks.sector == 'n/a', 'sector'] = None
 		stocks.loc[stocks.subsector == 'n/a', 'subsector'] = None
@@ -227,7 +236,7 @@ class ADVFNEquitySecurity(EquitySecurity, ADVFNStockInfoScraper):
 		stocks['ric'] = None
 		stocks['ibes_ticker'] = None
 		stocks['gics'] = None
-		stocks['source'] = 'WIKI'
+		stocks['source'] = 'ADVFN'
 		stocks['start_date'] = quote_date
 		stocks['end_date'] = '9999-12-31'
 
@@ -245,22 +254,119 @@ class EquityPricing(object):
 
 	"""
 
-	def __init__(self):
+	def __init__(self, debug=False):
 		"""
 
 		"""
 
 		super(EquityPricing, self).__init__()
 
-	def bulk(self, filename):
-		""" Writes a bulk dataset to file.
+		self.debug = debug
+
+	def bulk(self, cxn):
+		pass
+
+	def get(self, cxn, quote_date):
+		pass
+
+	def calc_accum_adj_factor(self, cxn, quote_date, stocks):
+
+	def update(self, cxn, quote_date):
+		""" Update latest prices.
+
+		Args:
+			cxn (database): Database connection
+			quote_date (datetime): Quote date
 
 		"""
 
-		pass
+		prices, dividends = self.get(cxn, quote_date)
 
-	def get(self, quote_date):
-		pass
+		# prices in the format 'quote_date', 'uid', 'currency_code', 'open', 'high', 'low', 'close',
+		# 'shares_os', 'volume', 'adj_factor', 'accum_adj_factor', 'accum_index', 'bid_ask_spread',
+		# 'source'
+
+		prev_date = cxn.execute("select max(quote_date) as quote_date from stock_prices").fetchone().quote_date
+
+		# check if there are any prices. If not, roll forward prices as repeats
+		if prices.empty and not self.debug:
+			if not prev_date:
+				return prices
+
+			sql = """
+				insert into stock_prices (quote_date, uid, currency_code, open, high, low, close,
+				shares_os, volume, adj_factor, accum_adj_factor, accum_index, bid_ask_spread,
+				source)
+				select ?, p.uid, p.currency_code, p.open, p.high, p.low, p.close, p.shares_os,
+				p.volume, p.adj_factor, p.accum_adj_factor, p.accum_index, p.bid_ask_spread,
+				'repeat'
+				from stock_prices p, stock_info i
+				where p.quote_date = ?
+				and p.uid = i.uid
+				and ? between i.start_date and i.end_date
+			"""
+
+			cxn.execute(sql, quote_date, prev_date, quote_date)
+
+			return prices
+
+		# need to fix adj_factor
+		need_adj = prices.loc[prices.adj_factor != 1]
+
+		uids = [id for id in prices.uid]
+
+		prev_prices = cxn.get_stock_prices(prev_date, uids)
+
+		all_prices = pd.concat([prev_prices, prices.set_index(['quote_date', 'uid'])])
+		grouped = all_prices.groupby(level='uid')
+		all_prices['adj_ret'] = np.absolute(all_prices.open / (grouped.open.shift(1) * all_prices.adj_factor) - 1)
+		all_prices['raw_ret'] = np.absolute(all_prices.open / grouped.open.shift(1) - 1)
+
+		# if adj_factor is not 1 and if we get a higher return if we adjust using it then it's probably wrong
+		all_prices.loc[(all_prices.adj_ret > all_prices.raw_ret) & (all_prices.adj_factor != 1), 'adj_factor'] = 1.0
+		all_prices = drop_columns(all_prices, ['adj_ret', 'raw_ret'])
+
+		prices = all_prices.loc[[quote_date]].reset_index()
+
+		prices = prices[['quote_date', 'uid', 'currency_code', 'open', 'high', 'low', 'close',
+			'shares_os', 'volume', 'adj_factor', 'accum_adj_factor', 'accum_index', 'bid_ask_spread',
+			'source']]
+
+		if not self.debug:
+			uids = ','.join([str(int(uid)) for uid in uids])
+
+			sql = """
+				delete from stock_prices
+				where quote_date = ?
+				and uid in (%s)
+			""" % uids
+
+			cxn.execute(sql, quote_date)
+
+			sql = """
+				delete from dividends
+				where ex_date = ?
+				and uid in (%s)
+			""" % uids
+
+			cxn.execute(sql, quote_date)
+
+			sql = """
+				insert into stock_prices (quote_date, uid, currency_code, open, high, low, close,
+				shares_os, volume, adj_factor, accum_adj_factor, accum_index, bid_ask_spread,
+				source) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			"""
+
+			cxn.executemany(sql, prices)
+
+			sql = """
+				insert into dividends (uid, ex_date, payable_date, gross_amount, net_amount,
+				source) values (?, ?, ?, ?, ?, ?)
+			"""
+
+			cxn.executemany(sql, dividends)
+
+		return prices, dividends
 
 class QuandlEquityPricing(EquityPricing):
 	""" Connects to quandl for pricing.
@@ -282,10 +388,10 @@ class QuandlEquityPricing(EquityPricing):
 		if not quandl.ApiConfig.api_key:
 			quandl.ApiConfig.api_key = self.api_key
 
-	def bulk(self, filename):
-		return quandl.bulkdownload(self.data_series, filename=filename)
+	# def bulk(self, filename):
+	# 	return quandl.bulkdownload(self.data_series, filename=filename)
 
-	def get(self, quote_date):
+	def get(self, cxn, quote_date):
 		pass
 
 class QuandlWIKIEquityPricing(QuandlEquityPricing):
@@ -329,6 +435,97 @@ class QuandlWIKIEquityPricing(QuandlEquityPricing):
 
 		self.url = 'https://www.quandl.com/api/v3/datatables/WIKI/PRICES.json'
 
+	def prepare(self, cxn, quote_date, dataset):
+		""" Does the heavy lifting in formatting the data.
+
+		"""
+
+		# dataset['uid'] = None
+		dataset['currency_code'] = 'USD'
+		dataset['shares_os'] = None
+		dataset['accum_adj_factor'] = 1
+		dataset['bid_ask_spread'] = None
+		dataset['source'] = 'WIKI'
+		dataset['accum_index'] = 1000.0
+
+		# figure out the uids
+		stocks = cxn.get_stock_list(quote_date).reset_index()
+		# dataset['uid'] = pd.merge(dataset[['ticker']], stocks[['ticker', 'uid']],
+		# 	how='left', on='ticker')['uid']
+		dataset = pd.merge(dataset, stocks[['ticker', 'uid']],
+			how='left', on='ticker')
+
+		# WIKI dataset's split ratio column can sometimes be wrong. Both close / adj_close and split ratio
+		# needs to align
+
+		e = EquitySecurity()
+
+		missing = dataset.loc[pd.isnull(dataset.uid)]
+		dataset = e.set_new_uid(cxn, dataset, stocks)
+		missing = dataset.loc[dataset.ticker.isin(missing.ticker)]
+
+		to_insert = missing[['uid', 'ticker', 'currency_code', 'source']].copy()
+		to_insert['security_name'] = None
+		to_insert['exchange'] = None
+		to_insert['bb_ticker'] = to_insert.ticker + ' US Equity'
+		to_insert['sedol'] = None
+		to_insert['isin'] = None
+		to_insert['cusip'] = None
+		to_insert['ric'] = None
+		to_insert['ibes_ticker'] = None
+		to_insert['gics'] = None
+		to_insert['icb'] = None
+		to_insert['country'] = 'US'
+		to_insert['security_type'] = 'Common Stock'
+		to_insert['start_date'] = quote_date
+		to_insert['end_date'] = '9999-12-31'
+
+		to_insert = to_insert[['uid', 'ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip', 'ric',
+			'ibes_ticker', 'currency_code', 'gics', 'icb', 'country', 'security_type', 'start_date', 'end_date',
+			'source']]
+
+		if not self.debug:
+			e.insert_new_stocks(cxn, to_insert)
+
+		dividends = dataset[['uid', 'quote_date', 'dividend', 'source']]
+		dividends = dividends.loc[dividends.dividend > 0]
+		dividends.rename(columns={'dividend' : 'gross_amount', 'quote_date' : 'ex_date'}, inplace=True)
+		dividends['net_amount'] = dividends.gross_amount
+		dividends['payable_date'] = None
+		dividends = dividends[['uid', 'ex_date', 'payable_date', 'gross_amount', 'net_amount',
+			'source']]
+
+		dataset = dataset[['quote_date', 'uid', 'currency_code', 'open', 'high', 'low', 'close',
+			'shares_os', 'volume', 'adj_factor', 'accum_adj_factor', 'accum_index', 'bid_ask_spread',
+			'source']]
+
+		return dataset, dividends
+
+	def bulk(self, cxn):
+		""" Get all prices in one go.
+
+		Args:
+			cxn (database): Database connection.
+
+		"""
+
+		params = {'api_key' : self.api_key, 'qopts.export' : 'true'}
+
+		r = requests.get(self.url, params=params)
+
+		dataset = json.loads(r.text)
+		dataset = [tuple(row) for row in dataset["datatable"]["data"]]
+		dataset = pd.DataFrame(dataset, columns=["ticker", "quote_date", "open", "high", "low", "close",
+			"volume", "dividend", "adj_factor", "adj_open", "adj_high", "adj_low", "adj_close",
+			"adj_volume"])
+
+		grouped = dataset.groupby('quote_date')
+
+		for quote_date, prices in grouped:
+			self.prepare(cxn, quote_date, prices)
+
+		return dataset
+
 	def get(self, cxn, quote_date):
 		""" Get all prices for one date.
 
@@ -350,32 +547,7 @@ class QuandlWIKIEquityPricing(QuandlEquityPricing):
 		dataset = json.loads(r.text)
 		dataset = [tuple(row) for row in dataset["datatable"]["data"]]
 		dataset = pd.DataFrame(dataset, columns=["ticker", "quote_date", "open", "high", "low", "close",
-			"volume", "dividiend", "adj_factor", "adj_open", "adj_high", "adj_low", "adj_close",
+			"volume", "dividend", "adj_factor", "adj_open", "adj_high", "adj_low", "adj_close",
 			"adj_volume"])
 
-		# WIKI dataset's split ratio column can sometimes be wrong. Both close / adj_close and split ratio
-		# needs to align
-
-		dataset['uid'] = None
-		dataset['currency_code'] = 'USD'
-		dataset['shares_os'] = None
-		dataset['accum_adj_factor'] = 1
-		dataset['bid_ask_spread'] = None
-		dataset['source'] = 'WIKI'
-		dataset['accum_index'] = None
-
-		# figure out the uids
-		stocks = cxn.get_stock_list(quote_date).reset_index()
-		dataset['uid'] = pd.merge(dataset[['ticker']], stocks[['ticker', 'uid']],
-			how='left', on=['ticker'])['uid']
-
-		e = EquitySecurity()
-
-		missing = dataset.loc[pd.isnull(dataset.uid)]
-		e.set_new_uid(missing, stocks)
-
-		dataset = dataset[['quote_date', 'uid', 'currency_code', 'open', 'high', 'low', 'close',
-			'shares_os', 'volume', 'adj_factor', 'accum_adj_factor', 'accum_index', 'bid_ask_spread',
-			'source']]
-
-		return dataset
+		return self.prepare(cxn, quote_date, dataset)
