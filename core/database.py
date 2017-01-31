@@ -67,7 +67,6 @@ class Database(object):
 		try:
 			cur = self.cursor()
 			status = cur.execute(sql, *args, **kwargs)
-			cur.commit()
 			return status
 		except:
 			self._connected = False

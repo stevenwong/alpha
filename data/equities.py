@@ -53,9 +53,9 @@ class EquitySecurity(object):
 
 		# insert new stocks
 		sql = """
-			insert into stock_info (uid, ticker, security_name, exchange, bb_ticker, sedol, isin, cusip, ric,
-			ibes_ticker, currency_code, gics, icb, country, security_type, start_date, end_date,
-			source) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			insert into stock_info_staging (uid, ticker, security_name, exchange, bb_ticker, sedol, isin, cusip, ric,
+			ibes_ticker, currency_code, gics, icb, country, security_type, quote_date,
+			source) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		"""
 		return cxn.executemany(sql, stocks)
 
@@ -97,49 +97,56 @@ class EquitySecurity(object):
 
 		prev_date = cxn.get_prev_trade_date(quote_date)
 
-		existing = cxn.get_stock_list(quote_date).reset_index()
-		stocks = self.get(cxn, quote_date)
+		try:
+			stocks = self.get(cxn, quote_date)
 
-		# match existing and new stocks to see what's changed
-		# order is [ticker, sedol, isin]
-		stocks['uid'] = pd.merge(stocks[['ticker', 'exchange']], existing[['ticker', 'exchange', 'uid']], how='left', on=['ticker', 'exchange'])['uid']
-		stocks['uid'].fillna(pd.merge(stocks.sedol.to_frame('sedol'), existing[['sedol', 'uid']], how='left', on='sedol')['uid'], inplace=True)
-		stocks['uid'].fillna(pd.merge(stocks['isin'].to_frame('isin'), existing[['isin', 'uid']], how='left', on='isin')['uid'], inplace=True)
+			# match existing and new stocks to see what's changed
+			# order is [ticker, sedol, isin]
+			# stocks['uid'] = pd.merge(stocks[['ticker', 'exchange']], existing[['ticker', 'exchange', 'uid']], how='left', on=['ticker', 'exchange'])['uid']
+			# stocks['uid'].fillna(pd.merge(stocks.sedol.to_frame('sedol'), existing[['sedol', 'uid']], how='left', on='sedol')['uid'], inplace=True)
+			# stocks['uid'].fillna(pd.merge(stocks['isin'].to_frame('isin'), existing[['isin', 'uid']], how='left', on='isin')['uid'], inplace=True)
 
-		stocks['status'] = 'new'
-		stocks.loc[pd.notnull(stocks.uid), 'status'] = 'exist'
-		stocks = stocks.where(pd.notnull(stocks), None)
+			# stocks['status'] = 'new'
+			# stocks.loc[pd.notnull(stocks.uid), 'status'] = 'exist'
+			# stocks = stocks.where(pd.notnull(stocks), None)
 
-		stocks = self.set_new_uid(cxn, stocks, existing)
+			# stocks = self.set_new_uid(cxn, stocks, existing)
 
-		to_insert = stocks.loc[stocks.status == 'new']
-		matched = stocks.loc[stocks.status == 'exist']
-		matched.sort_values('uid', inplace=True)
-		existing = existing.loc[existing.uid.isin(matched.uid)]
-		existing.sort_values('uid', inplace=True)
+			# to_insert = stocks.loc[stocks.status == 'new']
+			# matched = stocks.loc[stocks.status == 'exist']
+			# matched.sort_values('uid', inplace=True)
+			# existing = existing.loc[existing.uid.isin(matched.uid)]
+			# existing.sort_values('uid', inplace=True)
 
-		ne = (existing.set_index('uid')[['ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip',
-			'ric', 'ibes_ticker', 'currency_code', 'gics', 'icb', 'country']].sort(axis=0) !=
-			matched.set_index('uid')[['ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip',
-			'ric', 'ibes_ticker', 'currency_code', 'gics', 'icb', 'country']].sort(axis=0)).any(1)
+			# ne = (existing.set_index('uid')[['ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip',
+			# 	'ric', 'ibes_ticker', 'currency_code', 'gics', 'icb', 'country']].sort(axis=0) !=
+			# 	matched.set_index('uid')[['ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip',
+			# 	'ric', 'ibes_ticker', 'currency_code', 'gics', 'icb', 'country']].sort(axis=0)).any(1)
 
-		to_update = existing.loc[ne]
-		to_insert2 = matched.loc[ne]
+			# to_update = existing.loc[ne]
+			# to_insert2 = matched.loc[ne]
 
-		# two steps, end date the previous entry then insert the new updates.
-		sql2 = """
-			update stock_info set end_date = ?
-			where uid = ?
-		"""
-		cxn.executemany(sql2, to_update.uid)
+			# # two steps, end date the previous entry then insert the new updates.
+			# sql2 = """
+			# 	update stock_info set end_date = ?
+			# 	where uid = ?
+			# """
+			# cxn.executemany(sql2, to_update.uid)
 
-		to_insert = pd.concat([to_insert, to_insert2])
-		to_insert = drop_columns(to_insert, 'status')
+			# to_insert = pd.concat([to_insert, to_insert2])
+			# to_insert = drop_columns(to_insert, 'status')
 
-		# insert new stocks
-		self.insert_new_stocks(cxn, to_insert)
+			# insert new stocks
+			stocks = stocks.drop_duplicates()
+			self.insert_new_stocks(cxn, stocks)
 
-		return stocks
+			cxn.execute("call load_stock_info(0)")
+
+			return stocks
+
+		except:
+			self.stocks = stocks
+			raise
 
 class ADVFNEquitySecurity(EquitySecurity, ADVFNStockInfoScraper):
 	""" Scrape ADVFN for stock information. We first go to NASDAQ to get all available stocks in the
@@ -205,46 +212,49 @@ class ADVFNEquitySecurity(EquitySecurity, ADVFNStockInfoScraper):
 
 		"""
 
-		# get NASDAQ stocks
-		data1 = self._get_available_stocks(ADVFNEquitySecurity.NASDAQ, 'NASDAQ')
-		data2 = self._get_available_stocks(ADVFNEquitySecurity.NYSE, 'NYSE')
-		data3 = self._get_available_stocks(ADVFNEquitySecurity.AMEX, 'AMEX')
+		try:
+			# get NASDAQ stocks
+			data1 = self._get_available_stocks(ADVFNEquitySecurity.NASDAQ, 'NASDAQ')
+			data2 = self._get_available_stocks(ADVFNEquitySecurity.NYSE, 'NYSE')
+			data3 = self._get_available_stocks(ADVFNEquitySecurity.AMEX, 'AMEX')
 
-		stocks = pd.concat([data1, data2, data3])
+			stocks = pd.concat([data1, data2, data3])
 
-		details = stocks.apply(lambda x: pd.Series(self.parse(x.ticker, x.exchange)), axis=1)
-		
-		stocks = pd.merge(stocks, drop_columns(details, 'security_name'), on=['ticker', 'exchange'], how='left')
-		stocks = drop_columns(stocks, ['last', 'mkt_cap', 'url', 'spare', 'ipo_year'])
+			details = stocks.apply(lambda x: pd.Series(self.parse(x.ticker, x.exchange)), axis=1)
+			
+			stocks = pd.merge(stocks, drop_columns(details, 'security_name'), on=['ticker', 'exchange'], how='left')
+			stocks = drop_columns(stocks, ['last', 'mkt_cap', 'url', 'spare', 'ipo_year'])
 
-		icb = cxn.get_icb_sectors(unique_name=True)
+			icb = cxn.get_icb_sectors(unique_name=True)
 
-		stocks['security_name'] = stocks.security_name.apply(lambda x: html.unescape(x), axis=1)
+			stocks['security_name'] = stocks.security_name.apply(lambda x: html.unescape(x))
 
-		stocks.loc[stocks.security_name == 'n/a', 'security_name'] = None
-		stocks.loc[stocks.sector == 'n/a', 'sector'] = None
-		stocks.loc[stocks.subsector == 'n/a', 'subsector'] = None
-		translated = pd.merge(stocks[['ticker', 'subsector']], icb[['code', 'name']], how='left', left_on='subsector',
-			right_on='name')
-		translated = translated.rename(columns={'code' : 'icb'})
-		stocks['icb'] = translated.icb
-		stocks['uid'] = None
-		stocks['country'] = 'US'
-		stocks['bb_ticker'] = stocks.ticker + ' ' + stocks.country + ' Equity'
-		stocks['sedol'] = None
-		stocks['cusip'] = None
-		stocks['ric'] = None
-		stocks['ibes_ticker'] = None
-		stocks['gics'] = None
-		stocks['source'] = 'ADVFN'
-		stocks['start_date'] = quote_date
-		stocks['end_date'] = '9999-12-31'
+			stocks.loc[stocks.security_name == 'n/a', 'security_name'] = None
+			stocks.loc[stocks.sector == 'n/a', 'sector'] = None
+			stocks.loc[stocks.subsector == 'n/a', 'subsector'] = None
+			translated = pd.merge(stocks[['ticker', 'subsector']], icb[['code', 'name']], how='left', left_on='subsector',
+				right_on='name')
+			translated = translated.rename(columns={'code' : 'icb'})
+			stocks['icb'] = translated.icb
+			stocks['uid'] = None
+			stocks['country'] = 'US'
+			stocks['bb_ticker'] = stocks.ticker + ' ' + stocks.country + ' Equity'
+			stocks['sedol'] = None
+			stocks['cusip'] = None
+			stocks['ric'] = None
+			stocks['ibes_ticker'] = None
+			stocks['gics'] = None
+			stocks['source'] = 'ADVFN'
+			stocks['quote_date'] = quote_date
 
-		stocks = stocks[['uid', 'ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip', 'ric',
-			'ibes_ticker', 'currency_code', 'gics', 'icb', 'country', 'security_type', 'start_date', 'end_date',
-			'source']]
+			stocks = stocks[['uid', 'ticker', 'security_name', 'exchange', 'bb_ticker', 'sedol', 'isin', 'cusip', 'ric',
+				'ibes_ticker', 'currency_code', 'gics', 'icb', 'country', 'security_type', 'quote_date', 'source']]
 
-		return stocks
+			return stocks
+		except:
+			self.stocks = stocks
+
+			raise
 
 class EquityPricing(object):
 	""" Various pricing service. We want to align all equity prices into the following format::
@@ -268,8 +278,6 @@ class EquityPricing(object):
 
 	def get(self, cxn, quote_date):
 		pass
-
-	def calc_accum_adj_factor(self, cxn, quote_date, stocks):
 
 	def update(self, cxn, quote_date):
 		""" Update latest prices.
@@ -365,6 +373,9 @@ class EquityPricing(object):
 			"""
 
 			cxn.executemany(sql, dividends)
+
+			# call the procs to update accum_adj_factor and accum_index
+			cxn.execute("call calc_accum_adj_factor(?)", quote_date)
 
 		return prices, dividends
 

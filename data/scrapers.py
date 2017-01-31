@@ -8,6 +8,7 @@ permission of the owner.
 """
 
 import requests
+import logging
 
 from requests.exceptions import *
 from core.utils import *
@@ -78,36 +79,54 @@ class ADVFNStockInfoScraper(ScraperMixin):
 
 		try:
 			soup = super(ADVFNStockInfoScraper, self).fetch(url)
+
+			if not str(soup):
+				soup = super(ADVFNStockInfoScraper, self).fetch(url)
+
 		except TooManyRedirects:
 			return None
 
-		table = soup.find('th', string='Stock Name').parent.parent
+		try:
+			table = soup.find('th', string='Stock Name').parent.parent
 
-		if not table:
-			return None
+			if not table:
+				return None
 
-		rows = table.find_all('tr')
+			rows = table.find_all('tr')
 
-		if len(rows) < 2:
-			return None
+			if len(rows) < 2:
+				return None
 
-		row = rows[1]
+			row = rows[1]
 
-		cells = row.find_all('td')
-		fields['security_name'] = None if not len(cells) > 0 else cells[0].string.strip()
+			cells = row.find_all('td')
+			fields['security_name'] = cells[0].string.strip() if len(cells) > 0 and cells[0].string else None
 
-		fields['ticker'] = None if not len(cells) > 1 else cells[1].string.strip()
+			fields['ticker'] = cells[1].string.strip() if len(cells) > 1 and cells[1].string else None
 
-		fields['exchange'] = None if not len(cells) > 2 else cells[2].string.strip()
+			fields['exchange'] = cells[2].string.strip() if len(cells) > 2 and cells[2].string else None
 
-		fields['security_type'] = None if not len(cells) > 3 else cells[3].string.strip()
+			fields['security_type'] = cells[3].string.strip() if len(cells) > 3 and cells[3].string else None
 
-		fields['isin'] = None if not len(cells) > 4 else cells[4].string.strip()
+			fields['isin'] = cells[4].string.strip() if len(cells) > 4 and cells[4].string else None
 
-		text = soup.find('span', id='quoteElementPiece24').string
-		fields['currency_code'] = None if not text else text.strip()
+			table = soup.find('th', string='Currency').parent.parent
+			rows = table.find_all('tr')
+			row = rows[1]
+			cells = row.find_all('td')
 
-		return fields
+			fields['currency_code'] = cells[4].string.strip() if len(cells) > 4 and cells[4].string else None
+
+			return fields
+
+		except:
+			logging.error('URL was %s', url)
+			self.soup = soup
+			
+			with open('page.html', 'wb') as f:
+				f.write(str(soup))
+
+			raise
 
 class ADVFNFinancials(ScraperMixin):
 	""" Get stock financials from ADVFN.
