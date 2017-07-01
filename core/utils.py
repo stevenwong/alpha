@@ -1,10 +1,9 @@
-"""
-	core.utils
+""" core.utils
 
-	Copyright (C) 2016 Steven Wong <steven.ykwong87@gmail.com>
+Copyright (C) 2016 Steven Wong <steven.ykwong87@gmail.com>
 
-	This file can not be copied and/or distributed without the express
-	permission of the owner.
+This file can not be copied and/or distributed without the express
+permission of the owner.
 
 """
 
@@ -14,11 +13,18 @@ import pandas as pd
 from pandas.tseries.offsets import BMonthEnd, DateOffset
 from multiprocessing import Pool, cpu_count
 
-def drop_columns(df, to_drop):
-	""" Drop specified columns
+# rank z-score
+from scipy.stats import rankdata, zscore
 
-	:param df: DataFrame
-	:param to_drop: Columns to drop
+def drop_columns(df, to_drop):
+	""" Drop specified columns.
+
+	Args:
+		df (pandas.DataFrame): DataFrame.
+		to_drop (str or list(str)): Columns to drop.
+
+	Returns:
+		pandas.DataFrame: DataFrame without to_drop.
 
 	"""
 
@@ -35,12 +41,16 @@ def drop_columns(df, to_drop):
 def generate_trade_dates(start_date='1900-01-01', end_date='2199-12-31'):
 	""" Generate business dates. trade_dates table has columns:
 	[quote_date, next_trade_date, next_eom_date, weekday, is_eom, is_mom, counter]
-	Use this to insert into database
+	Use this to insert into database::
 
-	cxn.executemany('insert into trade_dates values (?, ?, ?, ?, ?, ?, ?)', ts)
+		cxn.executemany('insert into trade_dates values (?, ?, ?, ?, ?, ?, ?)', ts)
 
-	:param start_date: Start date
-	:param end_date: End date
+	Args:
+		start_date (datetime): Start date.
+		end_date (datetime): End date.
+
+	Returns:
+		pandas.DataFrame: DataFrame with generated trade dates.
 
 	"""
 
@@ -74,19 +84,52 @@ def generate_trade_dates(start_date='1900-01-01', end_date='2199-12-31'):
 	return ts
 
 def ifempty(value, reset=None):
+	""" Excel's iferror style function.
+
+	"""
+
 	if not value:
 		return reset
 	else:
 		return value
 
 def apply_parallel(grouped, func, spare=True):
+	""" Apply `func` to a grouped dataframe.
+
+	Args:
+		grouped (pandas.GroupBy): Grouped dataframe.
+		func (function): Function to apply.
+		spare (boolean, optional): Leave a CPU core spare. Default True.
+
+	Returns:
+		Aggregated dataset.
+
+	"""
+
 	jobs = cpu_count() - 1 if spare  else cpu_count()
 	with Pool(jobs) as p:
 		result = p.map(func, [group for name, group in grouped])
+
 	return pd.concat(result)
 
 def apply_row(df, func, spare=True):
+	""" Apply `func` to every row in the dataframe.
+
+	Args:
+		df (pandas.DataFrame): DataFrame.
+		func (function): Function to apply.
+		spare (boolean, optional): Leave a CPU core spare. Default True.
+
+	Returns:
+		Aggregated dataset.
+
+	"""
+
 	jobs = cpu_count() - 1 if spare  else cpu_count()
 	with Pool(jobs) as p:
 		result = p.map(func, [row for index, row in df.iterrows()])
+
 	return pd.concat(result)
+
+def rank_zscore(x):
+	return zscore(rankdata(x))
