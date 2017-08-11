@@ -1,10 +1,9 @@
-"""
-	start
+""" start
 
-	Copyright (C) 2016 Steven Wong <steven.ykwong87@gmail.com>
+Copyright (C) 2016 Steven Wong <steven.ykwong87@gmail.com>
 
-	This file can not be copied and/or distributed without the express
-	permission of the owner.
+This file can not be copied and/or distributed without the express
+permission of the owner.
 
 """
 

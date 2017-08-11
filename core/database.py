@@ -86,6 +86,7 @@ class Database(object):
 		"""
 
 		# test the connection first
+		
 		try:
 			with self.cursor() as cur:
 				cur.execute('select 1')

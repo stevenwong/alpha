@@ -1,2 +1,2 @@
 -- Database setup
-create user 'app'
+create or replace user app@localhost identified by 'alpha';

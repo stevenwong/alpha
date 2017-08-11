@@ -8,6 +8,7 @@ permission of the owner.
 """
 
 import collections
+import numpy as np
 import pandas as pd
 
 from pandas.tseries.offsets import BMonthEnd, DateOffset
@@ -132,4 +133,40 @@ def apply_row(df, func, spare=True):
 	return pd.concat(result)
 
 def rank_zscore(x):
-	return zscore(rankdata(x))
+	return pd.DataFrame(zscore(rankdata(x)))
+
+def winsorise(df, level=0.01, exc=None, groupby=None):
+	""" Winsorise both side of dataframe according to level.
+
+	Args:
+		df (pandas.DataFrame): Dataframe to winsorise.
+		level (float, optional): Level to winsorise data by.
+		exc (list(str)): columns to exclude.
+		groupby (str or list(str)): Winsorise by index.
+
+	Returns:
+		pandas.DataFrame: Winsorised dataframe.
+
+	"""
+
+	# select numeric columns
+	df = df.select_dtypes(include=[np.number])
+
+	if exc is not None:
+		df = drop_columns(df, exc)
+
+	# work out upper and lower limits
+	levels = [level, 1-level]
+
+	def _winsorise(x):
+		limits = x.quantile(q=levels)
+		return ((x > limits.iloc[0]) & (x < limits.iloc[1])).all(axis=1)
+
+	if groupby is not None:
+		grouped = df.groupby(level=groupby)
+		idx = grouped.apply(_winsorise)
+		df = df.loc[idx.values]
+	else:
+		df = _winsorise(df)
+
+	return df
